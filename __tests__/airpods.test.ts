@@ -1,4 +1,4 @@
-import { decodeAirPods } from '../src/airpods';
+import { decodeAirPods, proximityFrames } from '../src/airpods';
 
 function packet(status = 0x20, pods = 0x87, flags = 0x56, model = 0x0220) {
   return {
@@ -18,48 +18,102 @@ function packet(status = 0x20, pods = 0x87, flags = 0x56, model = 0x0220) {
   };
 }
 
+function earbuds(ad = packet()) {
+  const result = decodeAirPods(ad);
+  if (!result || result.kind !== 'earbuds') {
+    throw new Error('Expected earbuds');
+  }
+  return result;
+}
+
 test('decodes primary-left, case and charging flags independently', () => {
-  const d = decodeAirPods(packet())!;
+  const d = earbuds();
   expect(d.left).toEqual({ percent: 70, charging: true });
   expect(d.right).toEqual({ percent: 80, charging: false });
   expect(d.case).toEqual({ percent: 60, charging: true });
 });
-
 test('maps both battery and charging flags when right is primary', () => {
-  const d = decodeAirPods(packet(0))!;
+  const d = earbuds(packet(0));
   expect(d.right).toEqual({ percent: 70, charging: true });
   expect(d.left).toEqual({ percent: 80, charging: false });
 });
-
 test('unknown battery is absent, not zero or charging', () => {
-  const d = decodeAirPods(packet(0x20, 0xff, 0x7f))!;
+  const d = earbuds(packet(0x20, 0xff, 0x7f));
   expect(d.left).toEqual({ percent: null, charging: null });
   expect(d.right).toEqual({ percent: null, charging: null });
   expect(d.case).toEqual({ percent: null, charging: null });
 });
-
 test('zero battery remains zero; values above ten are capped', () => {
-  const d = decodeAirPods(packet(0x20, 0xe0, 0x0a))!;
+  const d = earbuds(packet(0x20, 0xe0, 0x0a));
   expect(d.left.percent).toBe(0);
   expect(d.right.percent).toBe(100);
   expect(d.case.percent).toBe(100);
 });
-
-test('recognizes second-generation model', () => {
-  expect(decodeAirPods(packet(0, 0x88, 0x08, 0x0f20))?.model).toBe('AirPods 2');
+test.each([
+  [0x0220, 'AirPods 1'],
+  [0x0f20, 'AirPods 2'],
+  [0x1320, 'AirPods 3'],
+  [0x1920, 'AirPods 4'],
+  [0x1b20, 'AirPods 4 ANC'],
+  [0x3620, 'AirPods 5'],
+  [0x3020, 'AirPods 5 · беспроводной кейс'],
+  [0x0e20, 'AirPods Pro'],
+  [0x1420, 'AirPods Pro 2 · Lightning'],
+  [0x2420, 'AirPods Pro 2 · USB-C'],
+  [0x2720, 'AirPods Pro 3'],
+])('recognizes dual-earbud model %i (%s)', (model, name) => {
+  const d = earbuds(packet(0x20, 0x87, 0x56, Number(model)));
+  expect(d.model).toBe(name);
+  expect(d.left.percent).toBe(70);
+  expect(d.right.percent).toBe(80);
+  expect(d.case.percent).toBe(60);
 });
-
-test('rejects unrelated, truncated, encrypted and unsupported packets', () => {
+test.each([0x0a20, 0x1f20, 0x2d20])(
+  'Max model %i has one battery and no fictitious case',
+  model => {
+    const d = decodeAirPods(packet(0, 0xf8, 0x1f, model));
+    expect(d?.kind).toBe('headphones');
+    expect(d).toHaveProperty('headset', { percent: 80, charging: true });
+    expect(d).not.toHaveProperty('case');
+    expect(d).not.toHaveProperty('left');
+  },
+);
+test('rejects unrelated, truncated, encrypted and unknown packets', () => {
   const valid = packet();
   expect(decodeAirPods({ ...valid, data: valid.data.slice(0, 9) })).toBeNull();
-  expect(
-    decodeAirPods({ ...valid, data: [8, ...valid.data.slice(1)] }),
-  ).toBeNull();
-  const badPrefix = packet();
-  badPrefix.data[2] = 7;
-  expect(decodeAirPods(badPrefix)).toBeNull();
+  const encrypted = packet();
+  encrypted.data[2] = 7;
+  expect(decodeAirPods(encrypted)).toBeNull();
   const badLength = packet();
   badLength.data[1] = 17;
   expect(decodeAirPods(badLength)).toBeNull();
-  expect(decodeAirPods(packet(0, 0x88, 0x08, 0x1920))).toBeNull();
+  expect(decodeAirPods(packet(0, 0x88, 0x08, 0xffff))).toBeNull();
+  expect(
+    decodeAirPods({ ...valid, data: [8, ...valid.data.slice(1)] }),
+  ).toBeNull();
+});
+test('finds proximity data after another complete Continuity message', () => {
+  const valid = packet();
+  const wrapped = { ...valid, data: [0x10, 2, 0, 0, ...valid.data] };
+  expect(earbuds(wrapped).model).toBe('AirPods 1');
+  expect(proximityFrames(wrapped.data)).toEqual([valid.data]);
+});
+test('skips encrypted and unknown records before a known status frame', () => {
+  const encrypted = packet();
+  encrypted.data[2] = 7;
+  const unknown = packet(0, 0x88, 0x08, 0xffff);
+  const valid = packet();
+  expect(
+    earbuds({
+      ...valid,
+      data: [...encrypted.data, ...unknown.data, ...valid.data],
+    }).model,
+  ).toBe('AirPods 1');
+});
+test('handles zero-length TLV and malformed tail without looping or fabricating data', () => {
+  const valid = packet();
+  expect(proximityFrames([0x10, 0, ...valid.data, 7, 25, 1])).toEqual([
+    valid.data,
+  ]);
+  expect(proximityFrames([7, 25, 1])).toEqual([]);
 });

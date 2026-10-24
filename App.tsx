@@ -13,9 +13,14 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { Advertisement, AirPods, Battery, decodeAirPods } from './src/airpods';
+import { AirPods, Battery, decodeAirPods } from './src/airpods';
+import {
+  ScanReport,
+  scanDiagnostics,
+  scanFailureMessage,
+} from './src/scanReport';
 
-type Scanner = { scan(): Promise<Advertisement[]>; cancel(): void };
+type Scanner = { scan(): Promise<ScanReport>; cancel(): void };
 const scanner: Scanner | undefined = NativeModules.AirPodsScanner;
 
 async function requestPermissions() {
@@ -59,6 +64,7 @@ function Screen() {
   const [busy, setBusy] = useState(false);
   const [devices, setDevices] = useState<AirPods[]>([]);
   const [updated, setUpdated] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<string | null>(null);
   const [message, setMessage] = useState(
     'Положи наушники в кейс и открой крышку рядом с телефоном.',
   );
@@ -92,6 +98,7 @@ function Screen() {
     setBusy(true);
     setDevices([]);
     setUpdated(null);
+    setDiagnostics(null);
     setMessage('Подготовка Bluetooth…');
     try {
       if (!scanner || Platform.OS !== 'android') {
@@ -119,11 +126,11 @@ function Screen() {
         );
       }
       setMessage('Ищем AirPods — около 8 секунд. Держи крышку кейса открытой.');
-      const ads = await scanner.scan();
+      const report = await scanner.scan();
       if (generation.current !== session) {
         return;
       }
-      const found = ads
+      const found = report.advertisements
         .map(decodeAirPods)
         .filter((d): d is AirPods => d !== null);
       found.sort((a, b) => b.rssi - a.rssi);
@@ -132,11 +139,8 @@ function Screen() {
         setUpdated(new Date().toLocaleTimeString('ru-RU'));
         setMessage('Проверка завершена. Сканирование выключено.');
       } else {
-        setMessage(
-          ads.length
-            ? 'Есть Bluetooth-пакеты Apple, но данные AirPods 1/2 не распознаны. Другие модели пока не поддерживаются.'
-            : 'AirPods не найдены. Проверь Bluetooth и системную геолокацию, открой кейс с наушниками внутри и повтори.',
-        );
+        setMessage(scanFailureMessage(report));
+        setDiagnostics(scanDiagnostics(report));
       }
     } catch (error) {
       if (generation.current === session) {
@@ -168,6 +172,11 @@ function Screen() {
             {message}
           </Text>
         </View>
+        {diagnostics ? (
+          <Text selectable style={styles.note}>
+            {diagnostics}
+          </Text>
+        ) : null}
         <Pressable
           accessibilityRole="button"
           disabled={busy}
@@ -193,9 +202,15 @@ function Screen() {
                 Найдены рядом · сигнал {device.rssi} dBm
               </Text>
             ) : null}
-            <BatteryRow label="Левый наушник" value={device.left} />
-            <BatteryRow label="Правый наушник" value={device.right} />
-            <BatteryRow label="Кейс" value={device.case} />
+            {device.kind === 'headphones' ? (
+              <BatteryRow label="Наушники" value={device.headset} />
+            ) : (
+              <>
+                <BatteryRow label="Левый наушник" value={device.left} />
+                <BatteryRow label="Правый наушник" value={device.right} />
+                <BatteryRow label="Кейс" value={device.case} />
+              </>
+            )}
           </View>
         ))}
         {updated ? (
@@ -209,9 +224,9 @@ function Screen() {
           передавать заряд.
         </Text>
         <Text style={styles.note}>
-          Прототип для AirPods 1 и 2. Доступ к местоположению нужен Android для
-          получения Bluetooth-маячков. Координаты не запрашиваются и не
-          сохраняются.
+          AirPods, AirPods Pro и AirPods Max. Доступ к местоположению нужен
+          Android для получения Bluetooth-маячков. Координаты не запрашиваются и
+          не сохраняются.
         </Text>
       </ScrollView>
     </SafeAreaView>
