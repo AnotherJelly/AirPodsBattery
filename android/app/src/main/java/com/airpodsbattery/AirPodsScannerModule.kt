@@ -22,9 +22,7 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
   private var scanner: BluetoothLeScanner? = null
   private var callback: ScanCallback? = null
   private var pending: Promise? = null
-  private data class Reading(val rssi: Int, val data: ByteArray, val complete: Boolean)
-  private val records = linkedMapOf<String, Reading>()
-  private var hasAppleData = false
+  private var readings: ScanReadings? = null
   private val timeout = Runnable { finish() }
   private val flush = Runnable {
     val cb = callback
@@ -50,9 +48,8 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
         return@post
       }
       pending = promise
-      clearResults()
       try {
-        val modelKinds = knownModels.toHashMap()
+        readings = ScanReadings(knownModels.toHashMap().mapValues { it.value as? String })
         val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val adapter = manager.adapter
         if (adapter == null || !adapter.isEnabled) {
@@ -80,36 +77,17 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
           private fun receive(results: List<ScanResult>) {
             handler.post {
               if (callback !== this || pending == null) return@post
-              var complete = false
+              val session = readings ?: return@post
               for (result in results) {
-                val payloads = result.scanRecord?.bytes?.let { AppleAdvertisements.payloads(it) } ?: emptyList()
-                if (payloads.isNotEmpty()) hasAppleData = true
-                for (payload in payloads) {
-                  for (frame in AppleAdvertisements.messages(payload)) {
-                    val type = frame[0].toInt() and 255
-                    val length = frame[1].toInt() and 255
-                    // Other messages must not replace a valid reading from the same address.
-                    if (type != 7 || length != 25 || frame[2].toInt() != 1) continue
-                    val model = ((frame[3].toInt() and 255) shl 8) or (frame[4].toInt() and 255)
-                    val kind = modelKinds[model.toString()] as? String ?: continue
-                    val id = try { result.device.address } catch (_: SecurityException) {
-                      fail("PERMISSION", "Bluetooth-разрешение отозвано. Проверь разрешения приложения.")
-                      return@post
-                    }
-                    // All data is session-local. No names, addresses or payloads are logged or persisted.
-                    if (records.size >= 64 && !records.containsKey(id)) continue
-                    val fullReading = AppleAdvertisements.hasCompleteBattery(frame, kind)
-                    val previous = records[id]
-                    // A later partial packet in the batch must not erase the complete reading.
-                    if (fullReading || previous?.complete != true) {
-                      records[id] = Reading(result.rssi, frame, fullReading)
-                    }
-                    if (fullReading) complete = true
-                  }
+                val raw = result.scanRecord?.bytes ?: continue
+                val id = try { result.device.address } catch (_: SecurityException) {
+                  fail("PERMISSION", "Bluetooth-разрешение отозвано. Проверь разрешения приложения.")
+                  return@post
                 }
+                session.receive(id, result.rssi, raw)
               }
               // Process the whole delivered batch before stopping, keeping nearby results together.
-              if (complete) finish()
+              if (session.complete) finish()
             }
           }
         }
@@ -142,31 +120,27 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
     scanner = null
   }
 
-  private fun clearResults() {
-    records.clear()
-    hasAppleData = false
-  }
-
   private fun finish() {
     stopRadio()
     val promise = pending
     pending = null
+    val session = readings
+    readings = null
     val advertisements = Arguments.createArray()
     // Convert each final reading once, instead of allocating bridge objects for every packet.
-    records.forEach { (id, reading) ->
+    session?.snapshot()?.forEach { reading ->
       val payload = Arguments.createArray()
       reading.data.forEach { payload.pushInt(it.toInt() and 255) }
       advertisements.pushMap(Arguments.createMap().apply {
-        putString("id", id)
+        putString("id", reading.id)
         putInt("rssi", reading.rssi)
         putArray("data", payload)
       })
     }
     val result = Arguments.createMap().apply {
       putArray("advertisements", advertisements)
-      putBoolean("hasAppleData", hasAppleData)
+      putBoolean("hasAppleData", session?.hasAppleData ?: false)
     }
-    clearResults()
     promise?.resolve(result)
   }
 
@@ -174,7 +148,7 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
     stopRadio()
     val promise = pending
     pending = null
-    clearResults()
+    readings = null
     promise?.reject(code, message)
   }
 

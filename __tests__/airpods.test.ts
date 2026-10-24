@@ -43,6 +43,20 @@ test('unknown battery is absent, not zero or charging', () => {
   expect(d.right).toEqual({ percent: null, charging: null });
   expect(d.case).toEqual({ percent: null, charging: null });
 });
+
+test('earbud readings remain available when the case is unknown', () => {
+  const d = earbuds(packet(0x20, 0x87, 0x7f));
+  expect(d.left).toEqual({ percent: 70, charging: true });
+  expect(d.right).toEqual({ percent: 80, charging: true });
+  expect(d.case).toEqual({ percent: null, charging: null });
+});
+
+test('one unknown earbud does not discard the other earbud or case', () => {
+  const d = earbuds(packet(0x20, 0xf7, 0x06));
+  expect(d.left.percent).toBe(70);
+  expect(d.right).toEqual({ percent: null, charging: null });
+  expect(d.case.percent).toBe(60);
+});
 test('zero battery remains zero; values above ten are capped', () => {
   const d = earbuds(packet(0x20, 0xe0, 0x0a));
   expect(d.left.percent).toBe(0);

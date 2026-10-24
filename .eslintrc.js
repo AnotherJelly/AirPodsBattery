@@ -1,6 +1,7 @@
 module.exports = {
   root: true,
   extends: '@react-native',
+  ignorePatterns: ['coverage/', '.artifacts/', '**/build/'],
   overrides: [
     // Bit masks are the wire format of the Bluetooth packet.
     {
