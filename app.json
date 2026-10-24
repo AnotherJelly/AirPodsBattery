@@ -4,7 +4,7 @@
   "expo": {
     "name": "AirPods Battery",
     "slug": "airpods-battery",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "android": {
       "package": "com.airpodsbattery"
     },

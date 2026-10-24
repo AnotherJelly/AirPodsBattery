@@ -8,7 +8,7 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease"
+        "gradleCommand": ":app:testReleaseUnitTest :app:assembleRelease"
       },
       "credentialsSource": "local"
     }

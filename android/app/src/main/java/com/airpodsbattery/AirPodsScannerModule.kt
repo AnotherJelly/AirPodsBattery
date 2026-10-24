@@ -29,6 +29,14 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
   private var applePacketCount = 0
   private var encryptedCasePacketCount = 0
   private val timeout = Runnable { finish() }
+  private val flush = Runnable {
+    val cb = callback
+    if (cb != null) {
+      try { scanner?.flushPendingScanResults(cb) } catch (_: SecurityException) {
+        fail("PERMISSION", "Bluetooth-разрешение отозвано. Проверь разрешения приложения.")
+      } catch (_: Exception) { }
+    }
+  }
 
   init { context.addLifecycleEventListener(this) }
   override fun getName() = "AirPodsScanner"
@@ -73,19 +81,12 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
             handler.post {
               if (callback !== this || pending == null) return@post
               packetCount++
-              val bytes = result.scanRecord?.getManufacturerSpecificData(0x004c) ?: return@post
+              val payloads = result.scanRecord?.bytes?.let { AppleAdvertisements.payloads(it) } ?: emptyList()
+              if (payloads.isEmpty()) return@post
               applePacketCount++
-              var offset = 0
-              while (offset + 2 <= bytes.size) {
-                val type = bytes[offset].toInt() and 255
-                val length = bytes[offset + 1].toInt() and 255
-                val end = offset + 2 + length
-                if (end > bytes.size) {
-                  if (formats.size < 16) formats.add("truncated bytes=${bytes.size}")
-                  break
-                }
-                val frame = bytes.copyOfRange(offset, end)
-                offset = end
+              for (frame in payloads.flatMap { AppleAdvertisements.messages(it) }) {
+                val type = frame[0].toInt() and 255
+                val length = frame[1].toInt() and 255
                 val signature = if (type == 7 && length == 25 && frame[2].toInt() == 1) {
                   String.format(Locale.ROOT, "type=07 bytes=%d prefix=%02X model=%02X%02X", frame.size, frame[2].toInt() and 255, frame[3].toInt() and 255, frame[4].toInt() and 255)
                 } else if (type == 7 && length == 17 && frame[2].toInt() == 6) {
@@ -95,7 +96,7 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
                   String.format(Locale.ROOT, "type=%02X bytes=%d", type, frame.size)
                 }
                 if (formats.size < 16) formats.add(signature)
-                // Store only complete plaintext status frames. Other messages must not
+                // Store plaintext status frames, including validated legacy short frames. Other messages must not
                 // replace a valid charge reading from the same advertising address.
                 if (type != 7 || length != 25 || frame[2].toInt() != 1) continue
                 val id = try { result.device.address } catch (_: SecurityException) {
@@ -119,13 +120,13 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
         val settings = ScanSettings.Builder()
           .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
           .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
-          .setReportDelay(0)
-        if (Build.VERSION.SDK_INT >= 26 && adapter.isLeExtendedAdvertisingSupported) {
-          settings.setLegacy(false)
-        }
+          .setReportDelay(if (adapter.isOffloadedScanBatchingSupported) 5000L else 0L)
         // Scan without controller/offload filters. Decode Apple data in the app,
         // and count all results to distinguish radio silence from an unsupported format.
         scanner!!.startScan(null, settings.build(), cb)
+        // Some controllers deliver AirPods only through batched results.
+        // Flush before the deadline, leaving time for the final callback.
+        if (adapter.isOffloadedScanBatchingSupported) handler.postDelayed(flush, 7000)
         handler.postDelayed(timeout, 8000)
       } catch (_: SecurityException) {
         fail("PERMISSION", "Нет разрешения на Bluetooth-поиск. Проверь разрешения приложения.")
@@ -137,6 +138,7 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
 
   private fun stopRadio() {
     handler.removeCallbacks(timeout)
+    handler.removeCallbacks(flush)
     val cb = callback
     callback = null
     try { if (cb != null) scanner?.stopScan(cb) } catch (_: Exception) { }

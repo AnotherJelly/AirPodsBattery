@@ -42,6 +42,20 @@ export function proximityFrames(data: number[]): number[][] {
     const length = data[offset + 1];
     const end = offset + 2 + length;
     if (end > data.length) {
+      const tail = data.slice(offset);
+      // Compatibility for short Gen 1/2 AD sections with an unchanged length byte.
+      // These still contain all public battery fields. Other layouts stay strict.
+      if (
+        tail.length >= 20 &&
+        tail.length < 27 &&
+        tail[0] === 7 &&
+        length === 25 &&
+        tail[2] === 1 &&
+        tail[4] === 0x20 &&
+        (tail[3] === 2 || tail[3] === 15)
+      ) {
+        frames.push(tail);
+      }
       break;
     }
     // Other prefixes contain encrypted/non-status data at the same offsets.

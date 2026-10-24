@@ -125,3 +125,26 @@ test('does not interpret ciphertext from a 07 11 06 case frame as a model or cha
     decodeAirPods({ id: 'case', rssi: -30, data: encryptedCase }),
   ).toBeNull();
 });
+
+test.each([0x0220, 0x0f20])(
+  'accepts short legacy plaintext layout for model %i',
+  model => {
+    const ad = packet(0x20, 0x85, 3, model);
+    const result = earbuds({ ...ad, data: ad.data.slice(0, 24) });
+    expect(result.left.percent).toBe(50);
+    expect(result.right.percent).toBe(80);
+    expect(result.case.percent).toBe(30);
+  },
+);
+
+test('does not accept a short payload for a different layout or pairing mode', () => {
+  const modern = packet(0x20, 0x85, 3, 0x2720);
+  expect(
+    decodeAirPods({ ...modern, data: modern.data.slice(0, 24) }),
+  ).toBeNull();
+  const pairing = packet();
+  pairing.data[2] = 0;
+  expect(
+    decodeAirPods({ ...pairing, data: pairing.data.slice(0, 24) }),
+  ).toBeNull();
+});
