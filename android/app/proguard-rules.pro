@@ -7,4 +7,8 @@
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
-# Add any project specific keep options here:
+# React Native 0.81 loads react_devsupportjni during release startup to read
+# InspectorFlags. JNI registers these classes by name, even with dev support
+# disabled; R8 cannot see those references in the native library.
+-keep class com.facebook.react.devsupport.CxxInspectorPackagerConnection { *; }
+-keep class com.facebook.react.devsupport.CxxInspectorPackagerConnection$* { *; }
