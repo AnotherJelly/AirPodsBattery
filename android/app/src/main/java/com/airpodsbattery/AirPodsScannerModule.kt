@@ -27,6 +27,7 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
   private val formats = linkedSetOf<String>()
   private var packetCount = 0
   private var applePacketCount = 0
+  private var encryptedCasePacketCount = 0
   private val timeout = Runnable { finish() }
 
   init { context.addLifecycleEventListener(this) }
@@ -53,7 +54,7 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
           return@post
         }
         val location = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        if (Build.VERSION.SDK_INT >= 28 && !location.isLocationEnabled) {
+        if (Build.VERSION.SDK_INT in 28..30 && !location.isLocationEnabled) {
           fail("LOCATION_OFF", "Включи системную геолокацию: Android может скрывать BLE-маячки, когда она выключена. Координаты приложение не получает.")
           return@post
         }
@@ -85,8 +86,11 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
                 }
                 val frame = bytes.copyOfRange(offset, end)
                 offset = end
-                val signature = if (type == 7 && length >= 3) {
+                val signature = if (type == 7 && length == 25 && frame[2].toInt() == 1) {
                   String.format(Locale.ROOT, "type=07 bytes=%d prefix=%02X model=%02X%02X", frame.size, frame[2].toInt() and 255, frame[3].toInt() and 255, frame[4].toInt() and 255)
+                } else if (type == 7 && length == 17 && frame[2].toInt() == 6) {
+                  encryptedCasePacketCount++
+                  "type=07 bytes=19 prefix=06 encrypted-case"
                 } else {
                   String.format(Locale.ROOT, "type=%02X bytes=%d", type, frame.size)
                 }
@@ -144,6 +148,7 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
     formats.clear()
     packetCount = 0
     applePacketCount = 0
+    encryptedCasePacketCount = 0
   }
 
   private fun finish() {
@@ -158,6 +163,7 @@ class AirPodsScannerModule(private val context: ReactApplicationContext) :
       putArray("advertisements", advertisements)
       putInt("packetCount", packetCount)
       putInt("applePacketCount", applePacketCount)
+      putInt("encryptedCasePacketCount", encryptedCasePacketCount)
       putArray("formats", signatures)
     }
     clearResults()

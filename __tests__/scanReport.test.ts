@@ -8,6 +8,7 @@ const report: ScanReport = {
   advertisements: [],
   packetCount: 0,
   applePacketCount: 0,
+  encryptedCasePacketCount: 0,
   formats: [],
 };
 
@@ -36,4 +37,15 @@ test('reports counts and protocol metadata without full payloads', () => {
   });
   expect(diagnostics).toContain('BLE-пакеты: 12. Apple: 3.');
   expect(diagnostics).toContain('model=0220');
+});
+
+test('recognizes the encrypted case format from the phone report', () => {
+  expect(
+    scanFailureMessage({
+      ...report,
+      packetCount: 75,
+      applePacketCount: 71,
+      encryptedCasePacketCount: 10,
+    }),
+  ).toContain('зашифрованные данные кейса');
 });

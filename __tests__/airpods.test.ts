@@ -117,3 +117,11 @@ test('handles zero-length TLV and malformed tail without looping or fabricating 
   ]);
   expect(proximityFrames([7, 25, 1])).toEqual([]);
 });
+
+test('does not interpret ciphertext from a 07 11 06 case frame as a model or charge', () => {
+  const encryptedCase = [7, 17, 6, 0x50, 0xc3, ...Array(14).fill(0)];
+  expect(encryptedCase).toHaveLength(19);
+  expect(
+    decodeAirPods({ id: 'case', rssi: -30, data: encryptedCase }),
+  ).toBeNull();
+});

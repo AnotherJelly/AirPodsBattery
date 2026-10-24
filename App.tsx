@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { AirPods, Battery, decodeAirPods } from './src/airpods';
+import { scanPermissions } from './src/permissions';
 import {
   ScanReport,
   scanDiagnostics,
@@ -24,16 +25,7 @@ type Scanner = { scan(): Promise<ScanReport>; cancel(): void };
 const scanner: Scanner | undefined = NativeModules.AirPodsScanner;
 
 async function requestPermissions() {
-  const permissions = [
-    PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
-    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-  ];
-  if (Number(Platform.Version) >= 31) {
-    permissions.push(
-      PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-      PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-    );
-  }
+  const permissions = scanPermissions(Number(Platform.Version));
   const result = await PermissionsAndroid.requestMultiple(permissions);
   return permissions.every(
     p => result[p] === PermissionsAndroid.RESULTS.GRANTED,
@@ -122,7 +114,7 @@ function Screen() {
       }
       if (!granted) {
         throw new Error(
-          'Разреши поиск устройств поблизости и доступ к местоположению в настройках приложения. Координаты мы не получаем.',
+          'Разреши доступ к устройствам поблизости в настройках приложения. На Android 11 и старше также требуется местоположение.',
         );
       }
       setMessage('Ищем AirPods — около 8 секунд. Держи крышку кейса открытой.');
@@ -220,13 +212,13 @@ function Screen() {
           </Text>
         ) : null}
         <Text style={styles.note}>
-          Проценты приблизительные, с шагом 10%. Закрытый кейс может не
-          передавать заряд.
+          Проценты приблизительные, с шагом 10%. Доступность заряда кейса
+          зависит от передаваемого формата.
         </Text>
         <Text style={styles.note}>
-          AirPods, AirPods Pro и AirPods Max. Доступ к местоположению нужен
-          Android для получения Bluetooth-маячков. Координаты не запрашиваются и
-          не сохраняются.
+          На Android 12 и новее нужны только «Устройства поблизости». На Android
+          11 и старше требуется местоположение. Приложение не получает
+          координаты.
         </Text>
       </ScrollView>
     </SafeAreaView>
