@@ -29,6 +29,11 @@ const models: Record<number, { name: string; kind: 'earbuds' | 'headphones' }> =
     0x2d20: { name: 'AirPods Max 2', kind: 'headphones' },
   };
 
+// Share supported models with the scanner so it never stops on an unknown model.
+export const scanModels: Record<string, AirPods['kind']> = Object.fromEntries(
+  Object.entries(models).map(([id, model]) => [id, model.kind]),
+);
+
 function battery(nibble: number, charging: boolean): Battery {
   const percent = nibble === 15 ? null : Math.min(nibble * 10, 100);
   return { percent, charging: percent === null ? null : charging };

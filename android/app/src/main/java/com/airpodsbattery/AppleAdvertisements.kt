@@ -6,6 +6,20 @@ package com.airpodsbattery
  * This implementation is independent and has no Android dependencies.
  */
 internal object AppleAdvertisements {
+  // A complete reading belongs to one status frame; never combine nearby pairs.
+  // Model kinds come from the same table that the JS decoder uses.
+  fun hasCompleteBattery(frame: ByteArray, kind: String?): Boolean {
+    if (frame.size < 20 || frame[0].toInt() != 7 ||
+      frame[1].toInt() != 25 || frame[2].toInt() != 1) return false
+    val pods = frame[6].toInt() and 255
+    return when (kind) {
+      "headphones" -> (pods and 15) != 15
+      "earbuds" -> (pods and 15) != 15 && (pods shr 4) != 15 &&
+        (frame[7].toInt() and 15) != 15
+      else -> false
+    }
+  }
+
   fun payloads(raw: ByteArray): List<ByteArray> {
     val found = mutableListOf<ByteArray>()
     var offset = 0

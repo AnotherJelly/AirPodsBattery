@@ -8,6 +8,30 @@ class AppleAdvertisementsTest {
   private fun ad(payload: ByteArray, company: Int = 0x4c): ByteArray =
     byteArrayOf((payload.size + 3).toByte(), 0xff.toByte(), company.toByte(), 0) + payload
 
+  @Test fun completeEarbudsAllowEarlyStopIncludingZeroPercent() {
+    assertTrue(AppleAdvertisements.hasCompleteBattery(frame(), "earbuds"))
+    val emptyBatteries = frame().apply { this[6] = 0; this[7] = 0 }
+    assertTrue(AppleAdvertisements.hasCompleteBattery(emptyBatteries, "earbuds"))
+  }
+  @Test fun missingEitherEarbudOrCaseKeepsScanning() {
+    for ((pods, case) in listOf(0xf5 to 3, 0x8f to 3, 0x85 to 0xf)) {
+      val partial = frame().apply { this[6] = pods.toByte(); this[7] = case.toByte() }
+      assertFalse(AppleAdvertisements.hasCompleteBattery(partial, "earbuds"))
+    }
+  }
+  @Test fun maxRequiresOnlyItsSingleBattery() {
+    val max = frame().apply { this[6] = 0xf8.toByte(); this[7] = 0xff.toByte() }
+    assertTrue(AppleAdvertisements.hasCompleteBattery(max, "headphones"))
+    max[6] = 0xff.toByte()
+    assertFalse(AppleAdvertisements.hasCompleteBattery(max, "headphones"))
+  }
+  @Test fun unknownOrEncryptedDataDoesNotStopScanning() {
+    assertFalse(AppleAdvertisements.hasCompleteBattery(frame(), null))
+    assertFalse(AppleAdvertisements.hasCompleteBattery(frame().copyOf(7), "earbuds"))
+    val encrypted = byteArrayOf(7, 17, 6) + ByteArray(16)
+    assertFalse(AppleAdvertisements.hasCompleteBattery(encrypted, "earbuds"))
+  }
+
   @Test fun preservesBothAppleManufacturerSectionsWhenBatteryIsFirst() {
     val battery = frame()
     val findMy = byteArrayOf(0x12, 2, 0, 0)

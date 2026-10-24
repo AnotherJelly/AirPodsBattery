@@ -1,12 +1,9 @@
 import { scanPermissions } from '../src/permissions';
 
 test.each([31, 34, 36])(
-  'Android API %i requests nearby devices without location',
+  'Android API %i requests scanning only, without connection or location',
   api => {
-    expect(scanPermissions(api)).toEqual([
-      'android.permission.BLUETOOTH_SCAN',
-      'android.permission.BLUETOOTH_CONNECT',
-    ]);
+    expect(scanPermissions(api)).toEqual(['android.permission.BLUETOOTH_SCAN']);
   },
 );
 

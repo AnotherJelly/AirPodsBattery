@@ -13,11 +13,14 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { AirPods, Battery, decodeAirPods } from './src/airpods';
+import { AirPods, Battery, decodeAirPods, scanModels } from './src/airpods';
 import { scanPermissions } from './src/permissions';
 import type { ScanReport } from './src/scanReport';
 
-type Scanner = { scan(): Promise<ScanReport>; cancel(): void };
+type Scanner = {
+  scan(models: typeof scanModels): Promise<ScanReport>;
+  cancel(): void;
+};
 const scanner: Scanner | undefined = NativeModules.AirPodsScanner;
 const emptyBattery: Battery = { percent: null, charging: null };
 
@@ -151,7 +154,7 @@ function Screen() {
             : 'Разреши доступ к местоположению для Bluetooth-поиска.',
         );
       }
-      const report = await scanner.scan();
+      const report = await scanner.scan(scanModels);
       if (generation.current !== session) {
         return;
       }
@@ -162,7 +165,7 @@ function Screen() {
       setDevices(found);
       if (!found.length) {
         setMessage(
-          report.applePacketCount > 0
+          report.hasAppleData
             ? 'Заряд недоступен. Открой кейс рядом с телефоном и повтори.'
             : 'AirPods не найдены. Открой кейс рядом с телефоном.',
         );
