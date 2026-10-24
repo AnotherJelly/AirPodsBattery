@@ -1,0 +1,45 @@
+# Dependencies and build output
+node_modules/
+build/
+.artifacts/
+coverage/
+*.apk
+*.aab
+*.jsbundle
+*.log
+
+# Android SDK, Gradle and native build caches
+.gradle/
+.kotlin/
+.cxx/
+local.properties
+*.hprof
+
+# Local signing and credentials
+*.keystore
+*.jks
+*.p12
+*.p8
+*.pem
+*.key
+credentials.json
+.env
+.env.*
+!.env.example
+
+# Local tooling and editor files
+.expo/
+.eas/
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+.metro-health-check*
+
+# Unused iOS/Ruby template: this app targets Android only
+/ios/
+/.bundle/
+/Gemfile
+/Gemfile.lock
+/vendor/

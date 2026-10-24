@@ -1,0 +1,17 @@
+{
+  "name": "AirPodsBattery",
+  "displayName": "AirPods Battery",
+  "expo": {
+    "name": "AirPods Battery",
+    "slug": "airpods-battery",
+    "version": "1.0.0",
+    "android": {
+      "package": "com.airpodsbattery"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "1364edeb-c6ef-4c2d-8177-5f9466710986"
+      }
+    }
+  }
+}
