@@ -15,14 +15,11 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { AirPods, Battery, decodeAirPods } from './src/airpods';
 import { scanPermissions } from './src/permissions';
-import {
-  ScanReport,
-  scanDiagnostics,
-  scanFailureMessage,
-} from './src/scanReport';
+import type { ScanReport } from './src/scanReport';
 
 type Scanner = { scan(): Promise<ScanReport>; cancel(): void };
 const scanner: Scanner | undefined = NativeModules.AirPodsScanner;
+const emptyBattery: Battery = { percent: null, charging: null };
 
 async function requestPermissions() {
   const permissions = scanPermissions(Number(Platform.Version));
@@ -33,33 +30,70 @@ async function requestPermissions() {
 }
 
 function BatteryRow({ label, value }: { label: string; value: Battery }) {
+  const percent = value.percent === null ? '—' : `≈ ${value.percent}%`;
   return (
-    <View style={styles.row}>
-      <View>
-        <Text style={styles.label}>{label}</Text>
-        <Text style={styles.detail}>
-          {value.percent === null
-            ? 'Нет данных'
-            : value.charging
-            ? 'Заряжается'
-            : 'Не заряжается'}
-        </Text>
+    <View
+      style={styles.row}
+      accessible
+      accessibilityLabel={`${label}: ${
+        value.percent === null ? 'нет данных' : `около ${value.percent}%`
+      }${value.charging ? ', заряжается' : ''}`}
+    >
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.reading}>
+        {value.charging ? <Text style={styles.charging}>ϟ</Text> : null}
+        <Text style={styles.percent}>{percent}</Text>
       </View>
-      <Text style={styles.percent}>
-        {value.percent === null ? '—' : `≈ ${value.percent}%`}
-      </Text>
     </View>
   );
+}
+
+function BatteryCard({ device }: { device?: AirPods }) {
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>{device?.model ?? 'AirPods'}</Text>
+      {device?.kind === 'headphones' ? (
+        <BatteryRow label="Наушники" value={device.headset} />
+      ) : (
+        <>
+          <BatteryRow
+            label="Левый наушник"
+            value={device?.left ?? emptyBattery}
+          />
+          <BatteryRow
+            label="Правый наушник"
+            value={device?.right ?? emptyBattery}
+          />
+          <BatteryRow label="Кейс" value={device?.case ?? emptyBattery} />
+        </>
+      )}
+    </View>
+  );
+}
+
+function errorMessage(error: unknown): string {
+  const code =
+    error && typeof error === 'object' && 'code' in error ? error.code : null;
+  switch (code) {
+    case 'BLUETOOTH_OFF':
+      return 'Включи Bluetooth.';
+    case 'PERMISSION':
+      return 'Разреши доступ к устройствам поблизости.';
+    case 'LOCATION_OFF':
+      return 'Включи местоположение для Bluetooth-поиска.';
+    case 'CANCELLED':
+      return 'Проверка остановлена.';
+    default:
+      return error instanceof Error
+        ? error.message
+        : 'Не удалось проверить заряд. Повтори попытку.';
+  }
 }
 
 function Screen() {
   const [busy, setBusy] = useState(false);
   const [devices, setDevices] = useState<AirPods[]>([]);
-  const [updated, setUpdated] = useState<string | null>(null);
-  const [diagnostics, setDiagnostics] = useState<string | null>(null);
-  const [message, setMessage] = useState(
-    'Положи наушники в кейс и открой крышку рядом с телефоном.',
-  );
+  const [message, setMessage] = useState<string | null>(null);
   const pending = useRef(false);
   const permissionPhase = useRef(false);
   const generation = useRef(0);
@@ -69,9 +103,11 @@ function Screen() {
       if (state !== 'active' && !permissionPhase.current) {
         generation.current += 1;
         scanner?.cancel();
-        pending.current = false;
-        setBusy(false);
-        setMessage('Проверка остановлена. Нажми кнопку, чтобы начать заново.');
+        if (pending.current) {
+          pending.current = false;
+          setBusy(false);
+          setMessage('Проверка остановлена.');
+        }
       }
     });
     return () => {
@@ -89,14 +125,10 @@ function Screen() {
     const session = ++generation.current;
     setBusy(true);
     setDevices([]);
-    setUpdated(null);
-    setDiagnostics(null);
-    setMessage('Подготовка Bluetooth…');
+    setMessage(null);
     try {
       if (!scanner || Platform.OS !== 'android') {
-        throw new Error(
-          'Нужна Android-сборка APK. В Expo Go проверка не работает.',
-        );
+        throw new Error('Нужна Android-сборка приложения.');
       }
       permissionPhase.current = true;
       let granted: boolean;
@@ -109,15 +141,16 @@ function Screen() {
         return;
       }
       if (AppState.currentState !== 'active') {
-        setMessage('Проверка остановлена. Нажми кнопку, чтобы начать заново.');
+        setMessage('Проверка остановлена.');
         return;
       }
       if (!granted) {
         throw new Error(
-          'Разреши доступ к устройствам поблизости в настройках приложения. На Android 11 и старше также требуется местоположение.',
+          Number(Platform.Version) >= 31
+            ? 'Разреши доступ к устройствам поблизости.'
+            : 'Разреши доступ к местоположению для Bluetooth-поиска.',
         );
       }
-      setMessage('Ищем AirPods — около 8 секунд. Держи крышку кейса открытой.');
       const report = await scanner.scan();
       if (generation.current !== session) {
         return;
@@ -127,20 +160,16 @@ function Screen() {
         .filter((d): d is AirPods => d !== null);
       found.sort((a, b) => b.rssi - a.rssi);
       setDevices(found);
-      if (found.length) {
-        setUpdated(new Date().toLocaleTimeString('ru-RU'));
-        setMessage('Проверка завершена. Сканирование выключено.');
-      } else {
-        setMessage(scanFailureMessage(report));
-        setDiagnostics(scanDiagnostics(report));
+      if (!found.length) {
+        setMessage(
+          report.applePacketCount > 0
+            ? 'Заряд недоступен. Открой кейс рядом с телефоном и повтори.'
+            : 'AirPods не найдены. Открой кейс рядом с телефоном.',
+        );
       }
     } catch (error) {
       if (generation.current === session) {
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : 'Не удалось проверить заряд. Попробуй ещё раз.',
-        );
+        setMessage(errorMessage(error));
       }
     } finally {
       if (generation.current === session) {
@@ -154,23 +183,9 @@ function Screen() {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor="#101419" />
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.eyebrow}>BLUETOOTH · ОФЛАЙН</Text>
-        <Text style={styles.title}>Заряд AirPods</Text>
-        <Text style={styles.subtitle}>
-          Проверка по кнопке.{'\n'}Без работы в фоне.
-        </Text>
-        <View style={styles.info}>
-          <Text style={styles.message} accessibilityLiveRegion="polite">
-            {message}
-          </Text>
-        </View>
-        {diagnostics ? (
-          <Text selectable style={styles.note}>
-            {diagnostics}
-          </Text>
-        ) : null}
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{ disabled: busy, busy }}
           disabled={busy}
           onPress={check}
           style={({ pressed }) => [
@@ -183,43 +198,16 @@ function Screen() {
             {busy ? 'Проверяем…' : 'Проверить заряд'}
           </Text>
         </Pressable>
-        {devices.map((device, index) => (
-          <View key={device.id} style={styles.card}>
-            <Text style={styles.cardTitle}>
-              {device.model}
-              {devices.length > 1 ? ` · ${index + 1}` : ''}
-            </Text>
-            {devices.length > 1 ? (
-              <Text style={styles.detail}>
-                Найдены рядом · сигнал {device.rssi} dBm
-              </Text>
-            ) : null}
-            {device.kind === 'headphones' ? (
-              <BatteryRow label="Наушники" value={device.headset} />
-            ) : (
-              <>
-                <BatteryRow label="Левый наушник" value={device.left} />
-                <BatteryRow label="Правый наушник" value={device.right} />
-                <BatteryRow label="Кейс" value={device.case} />
-              </>
-            )}
-          </View>
-        ))}
-        {updated ? (
-          <Text style={styles.note}>
-            Обновлено в {updated}. Это последний замер, не постоянный
-            мониторинг.
+        {devices.length ? (
+          devices.map(device => <BatteryCard key={device.id} device={device} />)
+        ) : (
+          <BatteryCard />
+        )}
+        {message ? (
+          <Text accessibilityLiveRegion="polite" style={styles.message}>
+            {message}
           </Text>
         ) : null}
-        <Text style={styles.note}>
-          Проценты приблизительные, с шагом 10%. Доступность заряда кейса
-          зависит от передаваемого формата.
-        </Text>
-        <Text style={styles.note}>
-          На Android 12 и новее нужны только «Устройства поблизости». На Android
-          11 и старше требуется местоположение. Приложение не получает
-          координаты.
-        </Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -235,16 +223,20 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#101419' },
-  content: { padding: 24, paddingTop: 36, gap: 20 },
-  eyebrow: { color: '#9cceb4', fontSize: 12, letterSpacing: 2 },
-  title: { color: '#f2f5f7', fontSize: 34, fontWeight: '700' },
-  subtitle: { color: '#a6b0bb', fontSize: 18, lineHeight: 27 },
-  info: { backgroundColor: '#1c252e', borderRadius: 16, padding: 20 },
-  message: { color: '#e1e7ec', fontSize: 16, lineHeight: 24 },
+  content: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 24,
+    gap: 20,
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
+  },
   button: {
     backgroundColor: '#a5edbf',
-    padding: 19,
-    borderRadius: 16,
+    paddingVertical: 19,
+    paddingHorizontal: 24,
+    borderRadius: 18,
     flexDirection: 'row',
     gap: 10,
     justifyContent: 'center',
@@ -252,15 +244,21 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: '#101419', fontSize: 17, fontWeight: '700' },
   dim: { opacity: 0.65 },
-  card: { backgroundColor: '#192028', padding: 20, borderRadius: 20, gap: 8 },
+  card: {
+    backgroundColor: '#192028',
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    paddingBottom: 8,
+    borderRadius: 24,
+  },
   cardTitle: {
     color: '#f2f5f7',
     fontSize: 22,
     fontWeight: '600',
-    marginBottom: 8,
+    marginBottom: 18,
   },
   row: {
-    paddingVertical: 14,
+    paddingVertical: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -268,8 +266,19 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#2c3640',
   },
-  label: { color: '#f2f5f7', fontSize: 16 },
-  detail: { color: '#9ba9b6', fontSize: 13, marginTop: 5 },
-  percent: { color: '#a5edbf', fontSize: 26, fontWeight: '600' },
-  note: { color: '#9ba9b6', fontSize: 13, lineHeight: 20 },
+  label: { color: '#dce3e9', fontSize: 16, flexShrink: 1 },
+  reading: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  percent: {
+    color: '#a5edbf',
+    fontSize: 30,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  charging: { color: '#a5edbf', fontSize: 25, fontWeight: '700' },
+  message: {
+    color: '#b4bec8',
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
 });
